@@ -388,11 +388,11 @@ func NewAxelarApp(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest
 	multisigK.SetSigRouter(multisigRounter)
 
 	tssK := tssKeeper.NewKeeper(
-		appCodec, keys[tssTypes.StoreKey], app.getSubspace(tssTypes.ModuleName), slashingK, rewardK,
+		appCodec, keys[tssTypes.StoreKey], app.getSubspace(tssTypes.ModuleName),
 	)
 	snapK := snapKeeper.NewKeeper(
 		appCodec, keys[snapTypes.StoreKey], app.getSubspace(snapTypes.ModuleName), stakingK, bankK,
-		slashingK, tssK,
+		slashingK,
 	)
 	votingK := voteKeeper.NewKeeper(
 		appCodec, keys[voteTypes.StoreKey], app.getSubspace(voteTypes.ModuleName), snapK, stakingK, rewardK,
@@ -445,7 +445,7 @@ func NewAxelarApp(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest
 	nexusK.SetRouter(nexusRouter)
 
 	ibcK := axelarnetKeeper.NewIBCKeeper(axelarnetK, app.transferKeeper, app.ibcKeeper.ChannelKeeper)
-	axelarnetModule := axelarnet.NewAppModule(axelarnetK, nexusK, bankK, app.transferKeeper, accountK, ibcK, transferModule, logger)
+	axelarnetModule := axelarnet.NewAppModule(axelarnetK, nexusK, bankK, accountK, ibcK, transferModule, logger)
 
 	// Create static IBC router, add transfer route, then set and seal it
 	ibcRouter := porttypes.NewRouter()
@@ -488,13 +488,13 @@ func NewAxelarApp(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest
 		feegrantmodule.NewAppModule(appCodec, accountK, bankK, feegrantK, app.interfaceRegistry),
 
 		snapshot.NewAppModule(snapK),
-		multisig.NewAppModule(multisigK, stakingK, slashingK, snapK, rewardK, nexusK, tssK),
+		multisig.NewAppModule(multisigK, stakingK, slashingK, snapK, rewardK, nexusK),
 		tss.NewAppModule(tssK, snapK, nexusK, stakingK, multisigK),
 		vote.NewAppModule(votingK),
 		nexus.NewAppModule(nexusK, snapK, slashingK, stakingK, axelarnetK, evmK, rewardK),
-		evm.NewAppModule(evmK, votingK, tssK, nexusK, snapK, stakingK, slashingK, multisigK, logger),
+		evm.NewAppModule(evmK, votingK, nexusK, snapK, stakingK, slashingK, multisigK, logger),
 		axelarnetModule,
-		reward.NewAppModule(rewardK, nexusK, mintK, stakingK, slashingK, tssK, snapK, bankK, bApp.MsgServiceRouter(), bApp.Router(), keys[paramstypes.StoreKey], tkeys[paramstypes.TStoreKey]),
+		reward.NewAppModule(rewardK, nexusK, mintK, stakingK, slashingK, tssK, snapK, bankK, bApp.MsgServiceRouter(), bApp.Router()),
 		permission.NewAppModule(permissionK),
 	)
 

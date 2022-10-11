@@ -23,12 +23,12 @@ import (
 	"github.com/tendermint/tendermint/libs/log"
 
 	"github.com/axelarnetwork/axelar-core/utils"
+	"github.com/axelarnetwork/axelar-core/utils/events"
 	"github.com/axelarnetwork/axelar-core/x/axelarnet/client/cli"
 	"github.com/axelarnetwork/axelar-core/x/axelarnet/client/rest"
 	"github.com/axelarnetwork/axelar-core/x/axelarnet/keeper"
 	"github.com/axelarnetwork/axelar-core/x/axelarnet/types"
 	nexus "github.com/axelarnetwork/axelar-core/x/nexus/exported"
-	"github.com/axelarnetwork/utils/funcs"
 )
 
 var (
@@ -95,14 +95,13 @@ func (AppModuleBasic) GetQueryCmd() *cobra.Command {
 // AppModule implements module.AppModule
 type AppModule struct {
 	AppModuleBasic
-	logger   log.Logger
-	keeper   keeper.Keeper
-	nexus    types.Nexus
-	bank     types.BankKeeper
-	transfer types.IBCTransferKeeper
-	channel  types.ChannelKeeper
-	account  types.AccountKeeper
-	ibcK     keeper.IBCKeeper
+	logger  log.Logger
+	keeper  keeper.Keeper
+	nexus   types.Nexus
+	bank    types.BankKeeper
+	channel types.ChannelKeeper
+	account types.AccountKeeper
+	ibcK    keeper.IBCKeeper
 
 	transferModule transfer.AppModule
 }
@@ -112,7 +111,6 @@ func NewAppModule(
 	k keeper.Keeper,
 	nexus types.Nexus,
 	bank types.BankKeeper,
-	transfer types.IBCTransferKeeper,
 	account types.AccountKeeper,
 	ibcK keeper.IBCKeeper,
 	transferModule transfer.AppModule,
@@ -123,7 +121,6 @@ func NewAppModule(
 		keeper:         k,
 		nexus:          nexus,
 		bank:           bank,
-		transfer:       transfer,
 		account:        account,
 		ibcK:           ibcK,
 		transferModule: transferModule,
@@ -154,7 +151,7 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 
 // Route returns the module's route
 func (am AppModule) Route() sdk.Route {
-	return sdk.NewRoute(types.RouterKey, NewHandler(am.keeper, am.nexus, am.bank, am.transfer, am.account, am.ibcK))
+	return sdk.NewRoute(types.RouterKey, NewHandler(am.keeper, am.nexus, am.bank, am.account, am.ibcK))
 }
 
 // QuerierRoute returns this module's query route
@@ -172,7 +169,7 @@ func (am AppModule) LegacyQuerierHandler(*codec.LegacyAmino) sdk.Querier {
 func (am AppModule) RegisterServices(cfg module.Configurator) {
 	types.RegisterQueryServiceServer(cfg.QueryServer(), keeper.NewGRPCQuerier(am.keeper, am.nexus))
 
-	err := cfg.RegisterMigration(types.ModuleName, 2, keeper.GetMigrationHandler(am.keeper))
+	err := cfg.RegisterMigration(types.ModuleName, 3, keeper.GetMigrationHandler(am.keeper))
 	if err != nil {
 		panic(err)
 	}
@@ -191,7 +188,7 @@ func (am AppModule) EndBlock(ctx sdk.Context, req abci.RequestEndBlock) []abci.V
 }
 
 // ConsensusVersion implements AppModule/ConsensusVersion.
-func (AppModule) ConsensusVersion() uint64 { return 3 }
+func (AppModule) ConsensusVersion() uint64 { return 4 }
 
 // OnChanOpenInit implements the IBCModule interface
 func (am AppModule) OnChanOpenInit(
@@ -326,13 +323,13 @@ func setTransferFailed(ctx sdk.Context, k keeper.Keeper, portID, channelID strin
 		return nil
 	}
 
-	funcs.MustNoErr(ctx.EventManager().EmitTypedEvent(
+	events.Emit(ctx,
 		&types.IBCTransferFailed{
 			ID:        transferID,
 			Sequence:  seq,
 			PortID:    portID,
 			ChannelID: channelID,
-		}))
+		})
 
 	k.Logger(ctx).Info(fmt.Sprintf("set IBC transfer %d failed", transferID))
 	return k.SetTransferFailed(ctx, transferID)
@@ -344,13 +341,13 @@ func setTransferCompleted(ctx sdk.Context, k keeper.Keeper, portID, channelID st
 		return nil
 	}
 
-	funcs.MustNoErr(ctx.EventManager().EmitTypedEvent(
+	events.Emit(ctx,
 		&types.IBCTransferCompleted{
 			ID:        transferID,
 			Sequence:  seq,
 			PortID:    portID,
 			ChannelID: channelID,
-		}))
+		})
 
 	k.Logger(ctx).Info(fmt.Sprintf("set IBC transfer %d completed", transferID))
 	return k.SetTransferCompleted(ctx, transferID)
