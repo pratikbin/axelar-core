@@ -153,11 +153,10 @@ func TestTransfer(t *testing.T) {
 		asset             string
 	)
 
-	givenKeeper := Given("a keeper", func() {
-		k, ctx = setup(cfg)
-	})
-
-	givenKeeper.
+	Given("a keeper",
+		func() {
+			k, ctx = setup(cfg)
+		}).
 		When("no recipient linked to sender",
 			func() {
 				sender, _ = makeRandAddresses(k, ctx)
@@ -169,32 +168,6 @@ func TestTransfer(t *testing.T) {
 			},
 		).Run(t, repeated)
 
-	givenKeeper.Branch(
-		When("sender chain doesn't support foreign assets",
-			func() {
-				sender, recipient = makeRandAddressesForChain(avalanche, terra)
-				sender.Chain.SupportsForeignAssets = false
-			}).
-			Then("enqueue transfer should return error",
-				func(t *testing.T) {
-					_, err := k.EnqueueTransfer(ctx, sender.Chain, recipient, makeRandAmount(axelarnet.NativeAsset))
-					assert.ErrorContains(t, err, "does not support foreign asset")
-				},
-			),
-		When("recipient chain doesn't support foreign assets",
-			func() {
-				sender, recipient = makeRandAddressesForChain(avalanche, terra)
-				recipient.Chain.SupportsForeignAssets = false
-			}).
-			Then("enqueue transfer should return error",
-				func(t *testing.T) {
-					_, err := k.EnqueueTransfer(ctx, sender.Chain, recipient, makeRandAmount(axelarnet.NativeAsset))
-					assert.ErrorContains(t, err, "does not support foreign asset")
-				},
-			),
-	).
-		Run(t, repeated)
-
 	addressError := Then("enqueue transfer should return error",
 		func(t *testing.T) {
 			_, err := k.EnqueueTransfer(ctx, sender.Chain, recipient, makeRandAmount(randAsset()))
@@ -202,7 +175,10 @@ func TestTransfer(t *testing.T) {
 		},
 	)
 
-	givenKeeper.
+	Given("a keeper",
+		func() {
+			k, ctx = setup(cfg)
+		}).
 		Branch(
 			When("link invalid axelarnet address", func() {
 				sender, _ = makeRandAddresses(k, ctx)
@@ -337,7 +313,10 @@ func TestTransfer(t *testing.T) {
 				}),
 	).Run(t, repeated)
 
-	givenKeeper.
+	Given("a keeper with registered assets",
+		func() {
+			k, ctx = setup(cfg)
+		}).
 		When("enqueue transfer first time",
 			func() {
 				sender, recipient = makeRandAddresses(k, ctx)

@@ -6,11 +6,11 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
-	"github.com/axelarnetwork/axelar-core/utils/events"
 	"github.com/axelarnetwork/axelar-core/x/evm/types"
 	nexus "github.com/axelarnetwork/axelar-core/x/nexus/exported"
 	vote "github.com/axelarnetwork/axelar-core/x/vote/exported"
 	"github.com/axelarnetwork/utils/funcs"
+	"github.com/axelarnetwork/utils/slices"
 )
 
 var _ vote.VoteHandler = &voteHandler{}
@@ -34,11 +34,11 @@ func NewVoteHandler(cdc codec.Codec, keeper types.BaseKeeper, nexus types.Nexus,
 
 func (v voteHandler) HandleFailedPoll(ctx sdk.Context, poll vote.Poll) error {
 	md := mustGetMetadata(poll)
-	events.Emit(ctx, &types.PollFailed{
+	funcs.MustNoErr(ctx.EventManager().EmitTypedEvent(&types.PollFailed{
 		TxID:   md.TxID,
 		Chain:  md.Chain,
 		PollID: poll.GetID(),
-	})
+	}))
 
 	return nil
 }
@@ -53,27 +53,12 @@ func (v voteHandler) HandleExpiredPoll(ctx sdk.Context, poll vote.Poll) error {
 		return fmt.Errorf("reward pool not set for poll %s", poll.GetID().String())
 	}
 
-	md := mustGetMetadata(poll)
+	// TODO: MarkMissingVote for those who didn't vote in time. Need
+	// to be able to get chain of expired polls in order to do it.
 	rewardPool := v.rewarder.GetPool(ctx, rewardPoolName)
-	chain, ok := v.nexus.GetChain(ctx, md.Chain)
-	if !ok {
-		return fmt.Errorf("%s is not a registered chain", md.Chain)
-	}
 	// Penalize voters who failed to vote
 	for _, voter := range poll.GetVoters() {
-		hasVoted := poll.HasVoted(voter)
-		if maintainerState, ok := v.nexus.GetChainMaintainerState(ctx, chain, voter); ok {
-			maintainerState.MarkMissingVote(!hasVoted)
-			funcs.MustNoErr(v.nexus.SetChainMaintainerState(ctx, maintainerState))
-
-			v.keeper.Logger(ctx).Debug(fmt.Sprintf("marked voter %s behaviour", voter.String()),
-				"voter", voter.String(),
-				"missing_vote", !hasVoted,
-				"poll", poll.GetID().String(),
-			)
-		}
-
-		if !hasVoted {
+		if !poll.HasVoted(voter) {
 			rewardPool.ClearRewards(voter)
 			v.keeper.Logger(ctx).Debug(fmt.Sprintf("penalized voter %s due to timeout", voter.String()),
 				"voter", voter.String(),
@@ -81,11 +66,12 @@ func (v voteHandler) HandleExpiredPoll(ctx sdk.Context, poll vote.Poll) error {
 		}
 	}
 
-	events.Emit(ctx, &types.PollExpired{
+	md := mustGetMetadata(poll)
+	funcs.MustNoErr(ctx.EventManager().EmitTypedEvent(&types.PollExpired{
 		TxID:   md.TxID,
 		Chain:  md.Chain,
 		PollID: poll.GetID(),
-	})
+	}))
 
 	return nil
 }
@@ -105,24 +91,18 @@ func (v voteHandler) HandleCompletedPoll(ctx sdk.Context, poll vote.Poll) error 
 
 	rewardPool := v.rewarder.GetPool(ctx, rewardPoolName)
 
+	chainState := v.nexus.GetChainState(ctx, chain)
 	for _, voter := range poll.GetVoters() {
-		maintainerState, ok := v.nexus.GetChainMaintainerState(ctx, chain, voter)
-		if !ok {
-			continue // voter is no longer a chain maintainer, so recording the state is irrelevant
-		}
-
 		hasVoted := poll.HasVoted(voter)
 		hasVotedIncorrectly := hasVoted && !poll.HasVotedCorrectly(voter)
 
-		maintainerState.MarkMissingVote(!hasVoted)
-		maintainerState.MarkIncorrectVote(hasVotedIncorrectly)
-		funcs.MustNoErr(v.nexus.SetChainMaintainerState(ctx, maintainerState))
+		chainState.MarkMissingVote(voter, !hasVoted)
+		chainState.MarkIncorrectVote(voter, hasVotedIncorrectly)
 
 		v.keeper.Logger(ctx).Debug(fmt.Sprintf("marked voter %s behaviour", voter.String()),
 			"voter", voter.String(),
 			"missing_vote", !hasVoted,
 			"incorrect_vote", hasVotedIncorrectly,
-			"poll", poll.GetID().String(),
 		)
 
 		switch {
@@ -140,21 +120,16 @@ func (v voteHandler) HandleCompletedPoll(ctx sdk.Context, poll vote.Poll) error 
 				"poll", poll.GetID().String())
 		}
 	}
+	v.nexus.SetChainState(ctx, chainState)
 
-	md := mustGetMetadata(poll)
 	if v.IsFalsyResult(voteEvents) {
-		events.Emit(ctx, &types.NoEventsConfirmed{
+		md := mustGetMetadata(poll)
+		funcs.MustNoErr(ctx.EventManager().EmitTypedEvent(&types.NoEventsConfirmed{
 			TxID:   md.TxID,
 			Chain:  md.Chain,
 			PollID: poll.GetID(),
-		})
+		}))
 	}
-
-	events.Emit(ctx, &types.PollCompleted{
-		TxID:   md.TxID,
-		Chain:  md.Chain,
-		PollID: poll.GetID(),
-	})
 
 	return nil
 }
@@ -164,6 +139,10 @@ func (v voteHandler) HandleResult(ctx sdk.Context, result codec.ProtoMarshaler) 
 
 	if v.IsFalsyResult(result) {
 		return nil
+	}
+
+	if slices.Any(voteEvents.Events, func(event types.Event) bool { return event.Chain != voteEvents.Chain }) {
+		return fmt.Errorf("events are not from the same source chain")
 	}
 
 	chain, ok := v.nexus.GetChain(ctx, voteEvents.Chain)
@@ -186,6 +165,12 @@ func (v voteHandler) HandleResult(ctx sdk.Context, result codec.ProtoMarshaler) 
 }
 
 func handleEvent(ctx sdk.Context, ck types.ChainKeeper, event types.Event, chain nexus.Chain) error {
+	// validate event
+	// TODO: move to ValidateBasic of msg_vote
+	if err := event.ValidateBasic(); err != nil {
+		return fmt.Errorf("event %s: %s", event.GetID(), err.Error())
+	}
+
 	// check if event confirmed before
 	eventID := event.GetID()
 	if _, ok := ck.GetEvent(ctx, eventID); ok {
@@ -196,7 +181,6 @@ func handleEvent(ctx sdk.Context, ck types.ChainKeeper, event types.Event, chain
 	}
 	ck.Logger(ctx).Info(fmt.Sprintf("confirmed %s event %s in transaction %s", chain.Name, eventID, event.TxID.Hex()))
 
-	// Deprecated
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(types.EventTypeEventConfirmation,
 			sdk.NewAttribute(sdk.AttributeKeyModule, types.ModuleName),
@@ -212,9 +196,9 @@ func handleEvent(ctx sdk.Context, ck types.ChainKeeper, event types.Event, chain
 
 func mustGetMetadata(poll vote.Poll) types.PollMetadata {
 	md := funcs.MustOk(poll.GetMetaData())
-	metadata, ok := md.(*types.PollMetadata)
+	chainTxID, ok := md.(*types.PollMetadata)
 	if !ok {
 		panic(fmt.Sprintf("poll metadata should be of type %T", &types.PollMetadata{}))
 	}
-	return *metadata
+	return *chainTxID
 }

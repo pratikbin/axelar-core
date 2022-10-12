@@ -66,7 +66,7 @@ func (k BaseKeeper) ExportGenesis(ctx sdk.Context) types.GenesisState {
 }
 
 func (k BaseKeeper) getChains(ctx sdk.Context) []types.GenesisState_Chain {
-	iter := k.getBaseStore(ctx).Iterator(utils.KeyFromStr(subspacePrefix))
+	iter := k.getBaseStore(ctx).Iterator(subspacePrefix)
 	defer utils.CloseLogError(iter, k.Logger(ctx))
 
 	var chains []types.GenesisState_Chain
@@ -77,7 +77,7 @@ func (k BaseKeeper) getChains(ctx sdk.Context) []types.GenesisState_Chain {
 			Params:              ck.GetParams(ctx),
 			BurnerInfos:         ck.getBurnerInfos(ctx),
 			CommandQueue:        ck.getCommandQueue(ctx).ExportState(),
-			ConfirmedDeposits:   ck.getConfirmedDeposits(ctx),
+			ConfirmedDeposits:   ck.GetConfirmedDeposits(ctx),
 			BurnedDeposits:      ck.getBurnedDeposits(ctx),
 			CommandBatches:      ck.getCommandBatchesMetadata(ctx),
 			Gateway:             ck.getGateway(ctx),

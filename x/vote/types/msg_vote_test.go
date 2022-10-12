@@ -4,17 +4,16 @@ import (
 	"testing"
 
 	"github.com/cosmos/cosmos-sdk/codec/types"
+	gogoprototypes "github.com/gogo/protobuf/types"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/axelarnetwork/axelar-core/testutils/rand"
-	evmTypes "github.com/axelarnetwork/axelar-core/x/evm/types"
-	nexus "github.com/axelarnetwork/axelar-core/x/nexus/exported"
 	"github.com/axelarnetwork/axelar-core/x/vote/exported"
 )
 
 func TestVoteRequest_ValidateBasic(t *testing.T) {
 	t.Run("no sender", func(t *testing.T) {
-		vote := NewVoteRequest(nil, exported.PollID(rand.PosI64()), evmTypes.NewVoteEvents(nexus.ChainName(rand.NormalizedStr(3))))
+		vote := NewVoteRequest(nil, exported.PollID(rand.PosI64()), &gogoprototypes.StringValue{Value: "result"})
 		assert.Error(t, vote.ValidateBasic())
 	})
 
@@ -37,7 +36,7 @@ func TestVoteRequest_ValidateBasic(t *testing.T) {
 	})
 
 	t.Run("correct vote", func(t *testing.T) {
-		vote := NewVoteRequest(rand.AccAddr(), exported.PollID(rand.PosI64()), evmTypes.NewVoteEvents(nexus.ChainName(rand.NormalizedStr(3))))
+		vote := NewVoteRequest(rand.AccAddr(), exported.PollID(rand.PosI64()), &gogoprototypes.StringValue{Value: "result"})
 		assert.NoError(t, vote.ValidateBasic())
 	})
 }

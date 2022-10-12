@@ -9,9 +9,9 @@ import (
 	gogoprototypes "github.com/gogo/protobuf/types"
 
 	"github.com/axelarnetwork/axelar-core/utils"
-	"github.com/axelarnetwork/axelar-core/utils/events"
 	"github.com/axelarnetwork/axelar-core/x/multisig/exported"
 	"github.com/axelarnetwork/axelar-core/x/multisig/types"
+	"github.com/axelarnetwork/utils/funcs"
 	"github.com/axelarnetwork/utils/math"
 	"github.com/axelarnetwork/utils/slices"
 )
@@ -87,7 +87,7 @@ func (k Keeper) Sign(ctx sdk.Context, keyID exported.KeyID, payloadHash exported
 
 	k.setSigningSession(ctx, signingSession)
 
-	events.Emit(ctx, types.NewSigningStarted(signingSession.GetID(), key, payloadHash[:], module))
+	funcs.MustNoErr(ctx.EventManager().EmitTypedEvent(types.NewSigningStarted(signingSession.GetID(), key, payloadHash[:], module)))
 	k.Logger(ctx).Info("signing session started",
 		"sig_id", signingSession.GetID(),
 		"key_id", key.GetID(),
@@ -133,10 +133,6 @@ func (k Keeper) nextSigID(ctx sdk.Context) uint64 {
 	return val.Value
 }
 
-func (k Keeper) setSigningSessionCount(ctx sdk.Context, count uint64) {
-	k.getStore(ctx).Set(signingSessionCountKey, &gogoprototypes.UInt64Value{Value: count})
-}
-
 func getSigningSessionExpiryKey(signing types.SigningSession) utils.Key {
 	expiry := signing.ExpiresAt
 	if signing.State == exported.Completed {
@@ -148,18 +144,4 @@ func getSigningSessionExpiryKey(signing types.SigningSession) utils.Key {
 
 func getSigningSessionKey(id uint64) utils.Key {
 	return signingPrefix.Append(utils.KeyFromInt(id))
-}
-
-func (k Keeper) getSigningSessions(ctx sdk.Context) (signingSessions []types.SigningSession) {
-	iter := k.getStore(ctx).Iterator(signingPrefix)
-	defer utils.CloseLogError(iter, k.Logger(ctx))
-
-	for ; iter.Valid(); iter.Next() {
-		var signingSession types.SigningSession
-		iter.UnmarshalValue(&signingSession)
-
-		signingSessions = append(signingSessions, signingSession)
-	}
-
-	return signingSessions
 }

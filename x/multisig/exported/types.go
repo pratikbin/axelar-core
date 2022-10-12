@@ -17,7 +17,7 @@ import (
 	"github.com/axelarnetwork/utils/funcs"
 )
 
-//go:generate moq -out ./mock/types.go -pkg mock . SigHandler Key MultiSig
+//go:generate moq -out ./mock/types.go -pkg mock . SigHandler Key
 
 // Key provides an interface to work with the key
 type Key interface {
@@ -37,13 +37,12 @@ type MultiSig interface {
 	GetSignature(p sdk.ValAddress) (btcec.Signature, bool)
 	GetPayloadHash() Hash
 	GetKeyID() KeyID
-	ValidateBasic() error
 }
 
 // SigHandler defines the interface for the requesting module to implement in
 // order to handle the different results of signing session
 type SigHandler interface {
-	HandleCompleted(ctx sdk.Context, sig utils.ValidatedProtoMarshaler, moduleMetadata codec.ProtoMarshaler) error
+	HandleCompleted(ctx sdk.Context, sig codec.ProtoMarshaler, moduleMetadata codec.ProtoMarshaler) error
 	HandleFailed(ctx sdk.Context, moduleMetadata codec.ProtoMarshaler) error
 }
 
@@ -53,7 +52,7 @@ const (
 	KeyIDLengthMax = 256
 )
 
-// KeyID ensures a correctly formatted key ID
+// KeyID ensures a correctly formatted tss key ID
 type KeyID string
 
 // ValidateBasic returns an error if the given key ID is invalid; nil otherwise

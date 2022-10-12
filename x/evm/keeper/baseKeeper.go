@@ -11,14 +11,13 @@ import (
 	"github.com/tendermint/tendermint/libs/log"
 
 	"github.com/axelarnetwork/axelar-core/utils"
-	"github.com/axelarnetwork/axelar-core/utils/key"
 	"github.com/axelarnetwork/axelar-core/x/evm/types"
 	nexus "github.com/axelarnetwork/axelar-core/x/nexus/exported"
 )
 
 var (
 	chainPrefix    = utils.KeyFromStr("chain")
-	subspacePrefix = "subspace"
+	subspacePrefix = utils.KeyFromStr("subspace")
 )
 
 var _ types.BaseKeeper = BaseKeeper{}
@@ -68,5 +67,5 @@ func (k BaseKeeper) getStore(ctx sdk.Context, chain string) utils.KVStore {
 
 // HasChain returns true if the chain has been set up
 func (k BaseKeeper) HasChain(ctx sdk.Context, chain nexus.ChainName) bool {
-	return k.getBaseStore(ctx).HasNew(key.FromStr(subspacePrefix).Append(key.From(chain)))
+	return k.getBaseStore(ctx).Has(subspacePrefix.AppendStr(strings.ToLower(chain.String())))
 }

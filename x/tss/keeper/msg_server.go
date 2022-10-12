@@ -7,13 +7,14 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	multisig "github.com/axelarnetwork/axelar-core/x/multisig/exported"
+	snapshot "github.com/axelarnetwork/axelar-core/x/snapshot/exported"
 	"github.com/axelarnetwork/axelar-core/x/tss/types"
 )
 
 var _ types.MsgServiceServer = msgServer{}
 
 type msgServer struct {
-	Keeper
+	types.TSSKeeper
 	snapshotter types.Snapshotter
 	staker      types.StakingKeeper
 	multisig    types.MultiSigKeeper
@@ -21,9 +22,9 @@ type msgServer struct {
 
 // NewMsgServerImpl returns an implementation of the broadcast MsgServiceServer interface
 // for the provided Keeper.
-func NewMsgServerImpl(keeper Keeper, s types.Snapshotter, staker types.StakingKeeper, multisig types.MultiSigKeeper) types.MsgServiceServer {
+func NewMsgServerImpl(keeper types.TSSKeeper, s types.Snapshotter, staker types.StakingKeeper, multisig types.MultiSigKeeper) types.MsgServiceServer {
 	return msgServer{
-		Keeper:      keeper,
+		TSSKeeper:   keeper,
 		snapshotter: s,
 		staker:      staker,
 		multisig:    multisig,
@@ -50,5 +51,5 @@ func (s msgServer) HeartBeat(c context.Context, req *types.HeartBeatRequest) (*t
 		}
 	}
 
-	return &types.HeartBeatResponse{}, nil
+	return &types.HeartBeatResponse{KeygenIllegibility: snapshot.None, SigningIllegibility: snapshot.None}, nil
 }

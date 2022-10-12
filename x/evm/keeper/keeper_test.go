@@ -4,9 +4,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/types/query"
 	paramsKeeper "github.com/cosmos/cosmos-sdk/x/params/keeper"
 	paramstypes "github.com/cosmos/cosmos-sdk/x/params/types"
 	"github.com/ethereum/go-ethereum/common"
@@ -19,15 +17,11 @@ import (
 	"github.com/axelarnetwork/axelar-core/testutils"
 	"github.com/axelarnetwork/axelar-core/testutils/fake"
 	"github.com/axelarnetwork/axelar-core/testutils/rand"
-	axelarnet "github.com/axelarnetwork/axelar-core/x/axelarnet/exported"
 	"github.com/axelarnetwork/axelar-core/x/evm/exported"
 	evmKeeper "github.com/axelarnetwork/axelar-core/x/evm/keeper"
 	"github.com/axelarnetwork/axelar-core/x/evm/types"
 	multisigTestUtils "github.com/axelarnetwork/axelar-core/x/multisig/exported/testutils"
-	types2 "github.com/axelarnetwork/axelar-core/x/multisig/types"
-	testutils2 "github.com/axelarnetwork/axelar-core/x/multisig/types/testutils"
 	nexus "github.com/axelarnetwork/axelar-core/x/nexus/exported"
-	. "github.com/axelarnetwork/utils/test"
 )
 
 func TestCommands(t *testing.T) {
@@ -39,7 +33,6 @@ func TestCommands(t *testing.T) {
 
 	setup := func() {
 		encCfg := params.MakeEncodingConfig()
-		encCfg.InterfaceRegistry.RegisterImplementations((*codec.ProtoMarshaler)(nil), &types2.MultiSig{})
 		paramsK := paramsKeeper.NewKeeper(encCfg.Codec, encCfg.Amino, sdk.NewKVStoreKey("params"), sdk.NewKVStoreKey("tparams"))
 		ctx = sdk.NewContext(fake.NewMultiStore(), tmproto.Header{}, false, log.TestingLogger())
 		keeper = evmKeeper.NewKeeper(encCfg.Codec, sdk.NewKVStoreKey("evm"), paramsK)
@@ -60,9 +53,10 @@ func TestCommands(t *testing.T) {
 
 		for i := 0; i < numCmds; i++ {
 			tokenDetails := createDetails(rand.NormalizedStr(10), rand.NormalizedStr(10))
-			cmd := types.NewDeployTokenCommand(chainID, multisigTestUtils.KeyID(), rand.Str(5), tokenDetails, types.ZeroAddress, sdk.NewUint(uint64(rand.PosI64())))
+			cmd, err := types.CreateDeployTokenCommand(chainID, multisigTestUtils.KeyID(), rand.Str(5), tokenDetails, types.ZeroAddress, sdk.NewUint(uint64(rand.PosI64())))
+			assert.NoError(t, err)
 
-			err := chainKeeper.EnqueueCommand(ctx, cmd)
+			err = chainKeeper.EnqueueCommand(ctx, cmd)
 			assert.NoError(t, err)
 
 			commands = append(commands, cmd)
@@ -83,8 +77,7 @@ func TestCommands(t *testing.T) {
 			assert.Less(t, len(remainingCmds), lastLength)
 			lastLength = len(remainingCmds)
 			batch := chainKeeper.GetLatestCommandBatch(ctx)
-			sig := testutils2.MultiSig()
-			assert.NoError(t, batch.SetSigned(&sig))
+			batch.SetStatus(types.BatchSigned)
 			if lastLength == 0 {
 				break
 			}
@@ -111,12 +104,10 @@ func TestSetBurnerInfoGetBurnerInfo(t *testing.T) {
 		setup()
 
 		burnerInfo := types.BurnerInfo{
-			BurnerAddress:    types.Address(common.BytesToAddress(rand.Bytes(common.AddressLength))),
-			TokenAddress:     types.Address(common.BytesToAddress(rand.Bytes(common.AddressLength))),
-			Symbol:           "assetsymbol",
-			Salt:             types.Hash(common.BytesToHash(rand.Bytes(common.HashLength))),
-			DestinationChain: nexus.ChainName("destination"),
-			Asset:            "assetdenom",
+			BurnerAddress: types.Address(common.BytesToAddress(rand.Bytes(common.AddressLength))),
+			TokenAddress:  types.Address(common.BytesToAddress(rand.Bytes(common.AddressLength))),
+			Symbol:        rand.StrBetween(2, 5),
+			Salt:          types.Hash(common.BytesToHash(rand.Bytes(common.HashLength))),
 		}
 
 		keeper.ForChain(chain).SetBurnerInfo(ctx, burnerInfo)
@@ -254,111 +245,4 @@ func TestGetBurnerAddress(t *testing.T) {
 		assert.Equal(t, expectedBurnerAddr, actualburnerAddr.Hex())
 		assert.Equal(t, common.Bytes2Hex(expectedSalt), common.Bytes2Hex(actualSalt[:]))
 	}))
-}
-
-func TestGetConfirmedDepositsPaginated(t *testing.T) {
-	var (
-		ctx         sdk.Context
-		keeper      types.BaseKeeper
-		chain       nexus.ChainName
-		chainKeeper types.ChainKeeper
-		deposits    map[string]types.ERC20Deposit
-	)
-
-	setup := func() {
-		encCfg := params.MakeEncodingConfig()
-		paramsK := paramsKeeper.NewKeeper(encCfg.Codec, encCfg.Amino, sdk.NewKVStoreKey("params"), sdk.NewKVStoreKey("tparams"))
-		ctx = sdk.NewContext(fake.NewMultiStore(), tmproto.Header{}, false, log.TestingLogger())
-		keeper = evmKeeper.NewKeeper(encCfg.Codec, sdk.NewKVStoreKey("evm"), paramsK)
-		chain = "Ethereum"
-	}
-
-	repeats := 20
-
-	whenDepositsAreConfirmed := When("set confirmed deposits", func() {
-		setup()
-		chainKeeper = keeper.ForChain(chain)
-		chainKeeper.SetParams(ctx, types.DefaultParams()[0])
-
-		depositCount := int(rand.I64Between(1, 20))
-		deposits = make(map[string]types.ERC20Deposit, depositCount)
-		for i := 0; i < depositCount; i++ {
-			deposit := types.ERC20Deposit{
-				TxID:             types.Hash(common.HexToHash(rand.HexStr(common.HashLength))),
-				Amount:           sdk.NewUint(uint64(rand.I64Between(1000, 1000000))),
-				Asset:            "asset",
-				DestinationChain: axelarnet.Axelarnet.Name,
-				BurnerAddress:    types.Address(common.HexToAddress(rand.HexStr(common.AddressLength))),
-			}
-			deposits[deposit.BurnerAddress.Hex()] = deposit
-
-			chainKeeper.SetDeposit(ctx, deposit, types.DepositStatus_Confirmed)
-		}
-	})
-
-	whenDepositsAreConfirmed.
-		Then("retrieve one", func(t *testing.T) {
-			confirmedDeposits, resp, err := chainKeeper.GetConfirmedDepositsPaginated(ctx, &query.PageRequest{Offset: 0, Limit: 1})
-			assert.NoError(t, err)
-			assert.NotNil(t, resp)
-			assert.Len(t, confirmedDeposits, 1)
-			_, ok := deposits[confirmedDeposits[0].BurnerAddress.Hex()]
-			assert.True(t, ok)
-		}).Run(t, repeats)
-
-	whenDepositsAreConfirmed.
-		Then("retrieve all deposits", func(t *testing.T) {
-			confirmedDeposits, resp, err := chainKeeper.GetConfirmedDepositsPaginated(ctx, &query.PageRequest{Offset: 0, Limit: uint64(len(deposits))})
-			assert.NoError(t, err)
-			assert.NotNil(t, resp)
-			assert.Len(t, confirmedDeposits, len(deposits))
-			for _, confirmedDeposit := range confirmedDeposits {
-				_, ok := deposits[confirmedDeposit.BurnerAddress.Hex()]
-				assert.True(t, ok)
-
-				chainKeeper.DeleteDeposit(ctx, confirmedDeposit)
-				chainKeeper.SetDeposit(ctx, confirmedDeposit, types.DepositStatus_Burned)
-			}
-
-			confirmedDeposits, resp, err = chainKeeper.GetConfirmedDepositsPaginated(ctx, &query.PageRequest{Offset: 0, Limit: uint64(len(deposits))})
-			assert.NoError(t, err)
-			assert.NotNil(t, resp)
-			assert.Len(t, confirmedDeposits, 0)
-		}).
-		Run(t, repeats)
-
-	whenDepositsAreConfirmed.
-		Then("retrieve batches of deposits", func(t *testing.T) {
-			batchSize := int(rand.I64Between(1, int64(len(deposits)+1)))
-			seen := make(map[string]types.ERC20Deposit, len(deposits))
-
-			for i := 0; i < len(deposits); i += batchSize {
-				confirmedDeposits, resp, err := chainKeeper.GetConfirmedDepositsPaginated(ctx, &query.PageRequest{Offset: uint64(i), Limit: uint64(batchSize)})
-				assert.NoError(t, err)
-				assert.NotNil(t, resp)
-
-				size := batchSize
-				if i+batchSize > len(deposits) {
-					size = len(deposits) - i
-				}
-				assert.Len(t, confirmedDeposits, size)
-
-				for _, confirmedDeposit := range confirmedDeposits {
-					seen[confirmedDeposit.BurnerAddress.Hex()] = confirmedDeposit
-				}
-			}
-
-			assert.Equal(t, deposits, seen)
-
-			for _, confirmedDeposit := range seen {
-				chainKeeper.DeleteDeposit(ctx, confirmedDeposit)
-				chainKeeper.SetDeposit(ctx, confirmedDeposit, types.DepositStatus_Burned)
-			}
-
-			confirmedDeposits, resp, err := chainKeeper.GetConfirmedDepositsPaginated(ctx, &query.PageRequest{Offset: 0, Limit: uint64(len(deposits))})
-			assert.NoError(t, err)
-			assert.NotNil(t, resp)
-			assert.Len(t, confirmedDeposits, 0)
-		}).
-		Run(t, repeats)
 }

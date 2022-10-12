@@ -27,7 +27,7 @@ func (m GenesisState) Validate() error {
 	}
 
 	for _, pool := range m.Pools {
-		if err := pool.ValidateBasic(); err != nil {
+		if err := pool.Validate(); err != nil {
 			return getValidateError(err)
 		}
 	}

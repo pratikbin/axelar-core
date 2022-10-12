@@ -91,6 +91,7 @@ type AppModule struct {
 	keeper      keeper.BaseKeeper
 	voter       types.Voter
 	nexus       types.Nexus
+	signer      types.Signer
 	snapshotter types.Snapshotter
 	staking     types.StakingKeeper
 	slashing    types.SlashingKeeper
@@ -101,6 +102,7 @@ type AppModule struct {
 func NewAppModule(
 	k keeper.BaseKeeper,
 	voter types.Voter,
+	signer types.Signer,
 	nexus types.Nexus,
 	snapshotter types.Snapshotter,
 	staking types.StakingKeeper,
@@ -117,6 +119,7 @@ func NewAppModule(
 		staking:        staking,
 		slashing:       slashing,
 		multisig:       multisig,
+		signer:         signer,
 	}
 }
 
@@ -158,9 +161,9 @@ func (am AppModule) LegacyQuerierHandler(*codec.LegacyAmino) sdk.Querier {
 // RegisterServices registers a GRPC query service to respond to the
 // module-specific GRPC queries.
 func (am AppModule) RegisterServices(cfg module.Configurator) {
-	types.RegisterQueryServiceServer(cfg.QueryServer(), keeper.NewGRPCQuerier(am.keeper, am.nexus, am.multisig))
+	types.RegisterQueryServiceServer(cfg.QueryServer(), keeper.NewGRPCQuerier(am.keeper, am.nexus, am.signer, am.multisig))
 
-	err := cfg.RegisterMigration(types.ModuleName, 5, keeper.AlwaysMigrateBytecode(am.keeper, am.nexus, keeper.Migrate5To6(am.keeper, am.nexus)))
+	err := cfg.RegisterMigration(types.ModuleName, 4, keeper.GetMigrationHandler(am.keeper, am.nexus, am.signer, am.multisig))
 	if err != nil {
 		panic(err)
 	}
@@ -179,4 +182,4 @@ func (am AppModule) EndBlock(ctx sdk.Context, req abci.RequestEndBlock) []abci.V
 }
 
 // ConsensusVersion implements AppModule/ConsensusVersion.
-func (AppModule) ConsensusVersion() uint64 { return 6 }
+func (AppModule) ConsensusVersion() uint64 { return 5 }

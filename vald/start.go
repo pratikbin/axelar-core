@@ -29,7 +29,6 @@ import (
 	"github.com/axelarnetwork/axelar-core/app"
 	"github.com/axelarnetwork/axelar-core/cmd/axelard/cmd/utils"
 	"github.com/axelarnetwork/axelar-core/sdk-utils/broadcast"
-	errors2 "github.com/axelarnetwork/axelar-core/utils/errors"
 	"github.com/axelarnetwork/axelar-core/vald/config"
 	"github.com/axelarnetwork/axelar-core/vald/evm"
 	evmRPC "github.com/axelarnetwork/axelar-core/vald/evm/rpc"
@@ -92,7 +91,7 @@ func GetValdCommand() *cobra.Command {
 			// dynamically adjust gas limit by simulating the tx first
 			txf := tx.NewFactoryCLI(cliCtx, cmd.Flags()).WithSimulateAndExecute(true)
 
-			return runVald(cliCtx, txf, logger, v)
+			return runVald(cmd.Context(), cliCtx, txf, logger, v)
 		},
 	}
 	setPersistentFlags(cmd)
@@ -113,7 +112,7 @@ func GetValdCommand() *cobra.Command {
 	return cmd
 }
 
-func runVald(cliCtx sdkClient.Context, txf tx.Factory, logger log.Logger, viper *viper.Viper) error {
+func runVald(ctx context.Context, cliCtx sdkClient.Context, txf tx.Factory, logger log.Logger, viper *viper.Viper) error {
 	// in case of panic we still want to try and cleanup resources,
 	// but we have to make sure it's not called more than once if the program is stopped by an interrupt signal
 	defer once.Do(cleanUp)
@@ -151,7 +150,7 @@ func runVald(cliCtx sdkClient.Context, txf tx.Factory, logger log.Logger, viper 
 	stateSource := NewRWFile(fPath)
 
 	logger.Info("start listening to events")
-	listen(cliCtx, txf, valdConf, valAddr, stateSource, logger)
+	listen(ctx, cliCtx, txf, valdConf, valAddr, stateSource, logger)
 	logger.Info("shutting down")
 	return nil
 }
@@ -171,7 +170,7 @@ func setPersistentFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().String(flags.FlagChainID, app.Name, "The network chain ID")
 }
 
-func listen(clientCtx sdkClient.Context, txf tx.Factory, axelarCfg config.ValdConfig, valAddr sdk.ValAddress, stateSource ReadWriter, logger log.Logger) {
+func listen(ctx context.Context, clientCtx sdkClient.Context, txf tx.Factory, axelarCfg config.ValdConfig, valAddr sdk.ValAddress, stateSource ReadWriter, logger log.Logger) {
 	encCfg := app.MakeEncodingConfig()
 	cdc := encCfg.Amino
 	sender, err := clientCtx.Keyring.Key(clientCtx.From)
@@ -291,7 +290,7 @@ func createJob(sub <-chan tmEvents.ABCIEventWithHeight, processor func(event tmE
 		processWithLog := func(e tmEvents.ABCIEventWithHeight) {
 			err := processor(tmEvents.Map(e))
 			if err != nil {
-				logger.Error(err.Error(), errors2.KeyVals(err))
+				logger.Error(err.Error())
 			}
 		}
 		consume := tmEvents.Consume(sub, processWithLog)
@@ -310,7 +309,7 @@ func createJobTyped[T proto.Message](sub <-chan tmEvents.ABCIEventWithHeight, pr
 			event := funcs.Must(sdk.ParseTypedEvent(e.Event)).(T)
 			err := processor(event)
 			if err != nil {
-				logger.Error(err.Error(), errors2.KeyVals(err))
+				logger.Error(err.Error())
 			}
 		}
 
@@ -446,11 +445,6 @@ func createEVMMgr(axelarCfg config.ValdConfig, cliCtx sdkClient.Context, b broad
 			logger.Error(err.Error())
 			panic(err)
 		}
-		logger.Debug(fmt.Sprintf("created JSON-RPC client of type %T", rpc),
-			"chain", evmChainConf.Name,
-			"url", evmChainConf.RPCAddr,
-		)
-
 		// clean up evmRPC connection on process shutdown
 		cleanupCommands = append(cleanupCommands, rpc.Close)
 

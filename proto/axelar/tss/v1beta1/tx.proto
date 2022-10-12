@@ -97,7 +97,16 @@ message HeartBeatRequest {
   ];
 }
 
-message HeartBeatResponse {}
+message HeartBeatResponse {
+  int32 keygen_illegibility = 1
+      [ (gogoproto.casttype) =
+            "github.com/axelarnetwork/axelar-core/x/snapshot/"
+            "exported.ValidatorIllegibility" ];
+  int32 signing_illegibility = 2
+      [ (gogoproto.casttype) =
+            "github.com/axelarnetwork/axelar-core/x/snapshot/"
+            "exported.ValidatorIllegibility" ];
+}
 
 message RegisterExternalKeysRequest {
   option (permission.exported.v1beta1.permission_role) = ROLE_CHAIN_MANAGEMENT;

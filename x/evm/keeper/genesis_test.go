@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"testing"
 
-	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	paramskeeper "github.com/cosmos/cosmos-sdk/x/params/keeper"
 	paramstypes "github.com/cosmos/cosmos-sdk/x/params/types"
@@ -18,7 +17,6 @@ import (
 	"github.com/axelarnetwork/axelar-core/x/evm/keeper"
 	"github.com/axelarnetwork/axelar-core/x/evm/types"
 	"github.com/axelarnetwork/axelar-core/x/evm/types/testutils"
-	multisig "github.com/axelarnetwork/axelar-core/x/multisig/types"
 	. "github.com/axelarnetwork/utils/test"
 )
 
@@ -39,7 +37,6 @@ func TestGenesis(t *testing.T) {
 	k := keeper.NewKeeper(cfg.Codec, sdk.NewKVStoreKey(types.StoreKey), paramsK)
 
 	Given("a genesis state", func() {
-		cfg.InterfaceRegistry.RegisterImplementations((*codec.ProtoMarshaler)(nil), &multisig.MultiSig{})
 		initialState = types.NewGenesisState(testutils.RandomChains(cfg.Codec))
 
 	}).When("it is valid", func() {

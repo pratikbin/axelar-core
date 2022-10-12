@@ -5,7 +5,6 @@ import (
 
 	"github.com/axelarnetwork/axelar-core/utils"
 	"github.com/axelarnetwork/axelar-core/x/axelarnet/types"
-	"github.com/axelarnetwork/utils/funcs"
 )
 
 // InitGenesis initializes the axelarnet module's state from a given genesis state.
@@ -27,7 +26,7 @@ func (k Keeper) InitGenesis(ctx sdk.Context, genState *types.GenesisState) {
 	k.GetIBCTransferQueue(ctx).(utils.GeneralKVQueue).ImportState(genState.TransferQueue)
 
 	for _, t := range genState.FailedTransfers {
-		funcs.MustNoErr(k.getStore(ctx).SetNewValidated(getFailedTransferKey(t.ID), &t))
+		k.getStore(ctx).SetNew(getFailedTransferKey(t.ID), &t)
 	}
 }
 

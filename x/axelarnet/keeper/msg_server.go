@@ -6,14 +6,14 @@ import (
 	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/types/query"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	ibctransfertypes "github.com/cosmos/ibc-go/v2/modules/apps/transfer/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
-	"github.com/axelarnetwork/axelar-core/utils/events"
 	"github.com/axelarnetwork/axelar-core/x/axelarnet/exported"
 	"github.com/axelarnetwork/axelar-core/x/axelarnet/types"
 	nexus "github.com/axelarnetwork/axelar-core/x/nexus/exported"
-	tss "github.com/axelarnetwork/axelar-core/x/tss/exported"
 	"github.com/axelarnetwork/utils/funcs"
 )
 
@@ -21,20 +21,22 @@ var _ types.MsgServiceServer = msgServer{}
 
 type msgServer struct {
 	Keeper
-	nexus   types.Nexus
-	bank    types.BankKeeper
-	account types.AccountKeeper
-	ibcK    IBCKeeper
+	nexus       types.Nexus
+	bank        types.BankKeeper
+	ibcTransfer types.IBCTransferKeeper
+	account     types.AccountKeeper
+	ibcK        IBCKeeper
 }
 
 // NewMsgServerImpl returns an implementation of the axelarnet MsgServiceServer interface for the provided Keeper.
-func NewMsgServerImpl(k Keeper, n types.Nexus, b types.BankKeeper, a types.AccountKeeper, ibcK IBCKeeper) types.MsgServiceServer {
+func NewMsgServerImpl(k Keeper, n types.Nexus, b types.BankKeeper, t types.IBCTransferKeeper, a types.AccountKeeper, ibcK IBCKeeper) types.MsgServiceServer {
 	return msgServer{
-		Keeper:  k,
-		nexus:   n,
-		bank:    b,
-		account: a,
-		ibcK:    ibcK,
+		Keeper:      k,
+		nexus:       n,
+		bank:        b,
+		ibcTransfer: t,
+		account:     a,
+		ibcK:        ibcK,
 	}
 }
 
@@ -107,17 +109,73 @@ func (s msgServer) ConfirmDeposit(c context.Context, req *types.ConfirmDepositRe
 		return nil, fmt.Errorf("recipient chain '%s' is not activated", recipient.Chain.Name)
 	}
 
-	coin, err := NewCoin(ctx, s.ibcK, s.nexus, amount)
-	if err != nil {
-		return nil, err
+	// deposit can be either of ICS 20 token from cosmos based chains, Axelarnet native asset, and wrapped asset from supported chain
+	switch {
+	// check if the format of token denomination is 'ibc/{hash}'
+	case isIBCDenom(req.Denom):
+		// get base denomination and tracing path
+		denomTrace, err := s.parseIBCDenom(ctx, req.Denom)
+		if err != nil {
+			return nil, err
+		}
+
+		// check if the asset registered with a path
+		chain, ok := s.nexus.GetChainByNativeAsset(ctx, denomTrace.GetBaseDenom())
+		if !ok {
+			return nil, fmt.Errorf("asset %s is not linked to a cosmos chain", denomTrace.GetBaseDenom())
+		}
+		path, ok := s.GetIBCPath(ctx, chain.Name)
+		if !ok {
+			return nil, fmt.Errorf("path not found for chain %s", chain.Name)
+		}
+		if path != denomTrace.Path {
+			return nil, fmt.Errorf("path %s does not match registered path %s for asset %s", denomTrace.GetPath(), path, denomTrace.GetBaseDenom())
+		}
+
+		// lock tokens in escrow address
+		escrowAddress := types.GetEscrowAddress(req.Denom)
+		if err := s.bank.SendCoins(
+			ctx, req.DepositAddress, escrowAddress, sdk.NewCoins(amount),
+		); err != nil {
+			return nil, err
+		}
+
+		// convert denomination from 'ibc/{hash}' to native asset that recognized by nexus module
+		amount = sdk.NewCoin(denomTrace.GetBaseDenom(), amount.Amount)
+
+	case isNativeAssetOnAxelarnet(ctx, s.nexus, req.Denom):
+		// lock tokens in escrow address
+		escrowAddress := types.GetEscrowAddress(req.Denom)
+		if err := s.bank.SendCoins(
+			ctx, req.DepositAddress, escrowAddress, sdk.NewCoins(amount),
+		); err != nil {
+			return nil, err
+		}
+
+	case s.nexus.IsAssetRegistered(ctx, exported.Axelarnet, req.Denom):
+		// transfer coins from linked address to module account and burn them
+		if err := s.bank.SendCoinsFromAccountToModule(
+			ctx, req.DepositAddress, types.ModuleName, sdk.NewCoins(amount),
+		); err != nil {
+			return nil, err
+		}
+
+		if err := s.bank.BurnCoins(
+			ctx, types.ModuleName, sdk.NewCoins(amount),
+		); err != nil {
+			// NOTE: should not happen as the module account was
+			// retrieved on the step above and it has enough balance
+			// to burn.
+			panic(fmt.Sprintf("cannot burn coins after a successful send to a module account: %v", err))
+		}
+
+	default:
+		return nil, sdkerrors.Wrap(types.ErrAxelarnet,
+			fmt.Sprintf("unrecognized %s token", req.Denom))
+
 	}
 
-	err = coin.Lock(s.bank, req.DepositAddress)
-	if err != nil {
-		return nil, err
-	}
-
-	transferID, err := s.nexus.EnqueueForTransfer(ctx, depositAddr, coin.Coin)
+	transferID, err := s.nexus.EnqueueForTransfer(ctx, depositAddr, amount)
 	if err != nil {
 		return nil, err
 	}
@@ -157,18 +215,7 @@ func (s msgServer) ExecutePendingTransfers(c context.Context, _ *types.ExecutePe
 		return nil, fmt.Errorf("%s is not a registered chain", types.ModuleName)
 	}
 
-	transferLimit := s.Keeper.GetTransferLimit(ctx)
-	pageRequest := &query.PageRequest{
-		Key:        nil,
-		Offset:     0,
-		Limit:      transferLimit,
-		CountTotal: false,
-		Reverse:    false,
-	}
-	pendingTransfers, _, err := s.nexus.GetTransfersForChainPaginated(ctx, chain, nexus.Pending, pageRequest)
-	if err != nil {
-		return nil, err
-	}
+	pendingTransfers := s.nexus.GetTransfersForChain(ctx, chain, nexus.Pending)
 
 	if len(pendingTransfers) == 0 {
 		s.Logger(ctx).Debug("no pending transfers found")
@@ -188,12 +235,12 @@ func (s msgServer) ExecutePendingTransfers(c context.Context, _ *types.ExecutePe
 			continue
 		}
 
-		events.Emit(ctx,
+		funcs.MustNoErr(ctx.EventManager().EmitTypedEvent(
 			&types.AxelarTransferCompleted{
 				ID:         pendingTransfer.ID,
 				Receipient: pendingTransfer.Recipient.Address,
 				Asset:      pendingTransfer.Asset,
-			})
+			}))
 
 		s.nexus.ArchivePendingTransfer(ctx, pendingTransfer)
 	}
@@ -206,11 +253,11 @@ func (s msgServer) ExecutePendingTransfers(c context.Context, _ *types.ExecutePe
 				continue
 			}
 
-			events.Emit(ctx,
+			funcs.MustNoErr(ctx.EventManager().EmitTypedEvent(
 				&types.FeeCollected{
 					Collector: collector,
 					Fee:       fee,
-				})
+				}))
 
 			s.nexus.SubTransferFee(ctx, fee)
 		}
@@ -233,21 +280,14 @@ func (s msgServer) RegisterIBCPath(c context.Context, req *types.RegisterIBCPath
 func (s msgServer) AddCosmosBasedChain(c context.Context, req *types.AddCosmosBasedChainRequest) (*types.AddCosmosBasedChainResponse, error) {
 	ctx := sdk.UnwrapSDKContext(c)
 
-	if _, found := s.nexus.GetChain(ctx, req.CosmosChain); found {
-		return &types.AddCosmosBasedChainResponse{}, fmt.Errorf("chain '%s' is already registered", req.CosmosChain)
+	if _, found := s.nexus.GetChain(ctx, req.Chain.Name); found {
+		return &types.AddCosmosBasedChainResponse{}, fmt.Errorf("chain '%s' is already registered", req.Chain.Name)
 	}
-
-	chain := nexus.Chain{
-		Name:                  req.CosmosChain,
-		KeyType:               tss.None,
-		SupportsForeignAssets: true,
-		Module:                types.ModuleName,
-	}
-	s.nexus.SetChain(ctx, chain)
+	s.nexus.SetChain(ctx, req.Chain)
 
 	// register asset in chain state
 	for _, asset := range req.NativeAssets {
-		if err := s.nexus.RegisterAsset(ctx, chain, asset); err != nil {
+		if err := s.nexus.RegisterAsset(ctx, req.Chain, asset); err != nil {
 			return nil, err
 		}
 
@@ -258,7 +298,7 @@ func (s msgServer) AddCosmosBasedChain(c context.Context, req *types.AddCosmosBa
 	}
 
 	s.SetCosmosChain(ctx, types.CosmosChain{
-		Name:       chain.Name,
+		Name:       req.Chain.Name,
 		AddrPrefix: req.AddrPrefix,
 	})
 
@@ -320,18 +360,7 @@ func (s msgServer) RouteIBCTransfers(c context.Context, _ *types.RouteIBCTransfe
 		}
 		portID, channelID := pathSplit[0], pathSplit[1]
 
-		transferLimit := s.Keeper.GetTransferLimit(ctx)
-		pageRequest := &query.PageRequest{
-			Key:        nil,
-			Offset:     0,
-			Limit:      transferLimit,
-			CountTotal: false,
-			Reverse:    false,
-		}
-		pendingTransfers, _, err := s.nexus.GetTransfersForChainPaginated(ctx, chain, nexus.Pending, pageRequest)
-		if err != nil {
-			return nil, err
-		}
+		pendingTransfers := s.nexus.GetTransfersForChain(ctx, chain, nexus.Pending)
 		for _, p := range pendingTransfers {
 			token, sender, err := prepareTransfer(ctx, s.Keeper, s.nexus, s.bank, s.account, p.Asset)
 			if err != nil {
@@ -394,17 +423,57 @@ func (s msgServer) RetryIBCTransfer(c context.Context, req *types.RetryIBCTransf
 
 	funcs.MustNoErr(s.SetTransferPending(ctx, t.ID))
 
-	events.Emit(ctx,
-		&types.IBCTransferRetried{
+	funcs.MustNoErr(ctx.EventManager().EmitTypedEvent(
+		&types.IBCTransferSent{
 			ID:         t.ID,
 			Receipient: t.Receiver,
 			Asset:      t.Token,
 			Sequence:   t.Sequence,
 			PortID:     t.PortID,
 			ChannelID:  t.ChannelID,
-		})
+		}))
 
 	return &types.RetryIBCTransferResponse{}, nil
+}
+
+// isIBCDenom validates that the given denomination is a valid ICS token representation (ibc/{hash})
+func isIBCDenom(denom string) bool {
+	if err := sdk.ValidateDenom(denom); err != nil {
+		return false
+	}
+
+	denomSplit := strings.SplitN(denom, "/", 2)
+	if len(denomSplit) != 2 || denomSplit[0] != ibctransfertypes.DenomPrefix {
+		return false
+	}
+	if _, err := ibctransfertypes.ParseHexHash(denomSplit[1]); err != nil {
+		return false
+	}
+
+	return true
+}
+
+func isNativeAssetOnAxelarnet(ctx sdk.Context, n types.Nexus, denom string) bool {
+	chain, ok := n.GetChainByNativeAsset(ctx, denom)
+	return ok && chain.Name == exported.Axelarnet.Name
+}
+
+// parseIBCDenom retrieves the full identifiers trace and base denomination from the IBC transfer keeper store
+func (s msgServer) parseIBCDenom(ctx sdk.Context, ibcDenom string) (ibctransfertypes.DenomTrace, error) {
+	denomSplit := strings.Split(ibcDenom, "/")
+
+	hash, err := ibctransfertypes.ParseHexHash(denomSplit[1])
+	if err != nil {
+		return ibctransfertypes.DenomTrace{}, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid denom trace hash %s, %s", hash, err))
+	}
+	denomTrace, found := s.ibcTransfer.GetDenomTrace(ctx, hash)
+	if !found {
+		return ibctransfertypes.DenomTrace{}, status.Error(
+			codes.NotFound,
+			sdkerrors.Wrap(ibctransfertypes.ErrTraceNotFound, denomSplit[1]).Error(),
+		)
+	}
+	return denomTrace, nil
 }
 
 // toICS20 converts a cross chain transfer to ICS20 token

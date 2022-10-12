@@ -28,6 +28,7 @@ func TestQueryPendingCommands(t *testing.T) {
 	var (
 		chainKeeper    *mock.ChainKeeperMock
 		baseKeeper     *mock.BaseKeeperMock
+		signer         *mock.SignerMock
 		multisigKeeper *mock.MultisigKeeperMock
 		nexusKeeper    *mock.NexusMock
 		ctx            sdk.Context
@@ -47,9 +48,9 @@ func TestQueryPendingCommands(t *testing.T) {
 		chainID = sdk.NewInt(1)
 		keyID = multisigTestutils.KeyID()
 		dailyMintLimit := sdk.NewUint(uint64(rand.PosI64()))
-		cmdDeploy := types.NewDeployTokenCommand(chainID, keyID, asset, createDetails(asset, symbol), types.ZeroAddress, dailyMintLimit)
-		cmdMint := types.NewMintTokenCommand(keyID, types.NewCommandID(rand.Bytes(10), chainID), symbol, common.BytesToAddress(rand.Bytes(common.AddressLength)), big.NewInt(rand.I64Between(1000, 100000)))
-		cmdBurn := types.NewBurnTokenCommand(chainID, keyID, ctx.BlockHeight(), types.BurnerInfo{
+		cmdDeploy, _ := types.CreateDeployTokenCommand(chainID, keyID, asset, createDetails(asset, symbol), types.ZeroAddress, dailyMintLimit)
+		cmdMint, _ := types.CreateMintTokenCommand(keyID, types.NewCommandID(rand.Bytes(10), chainID), symbol, common.BytesToAddress(rand.Bytes(common.AddressLength)), big.NewInt(rand.I64Between(1000, 100000)))
+		cmdBurn, _ := types.CreateBurnTokenCommand(chainID, keyID, ctx.BlockHeight(), types.BurnerInfo{
 			BurnerAddress: types.Address(common.BytesToAddress(rand.Bytes(common.AddressLength))),
 			TokenAddress:  types.Address(common.BytesToAddress(rand.Bytes(common.AddressLength))),
 			Symbol:        symbol,
@@ -89,7 +90,7 @@ func TestQueryPendingCommands(t *testing.T) {
 	t.Run("happy path", testutils.Func(func(t *testing.T) {
 		setup()
 
-		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, multisigKeeper)
+		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, signer, multisigKeeper)
 
 		res, err := q.PendingCommands(sdk.WrapSDKContext(ctx), &types.PendingCommandsRequest{Chain: evmChain.String()})
 		assert.NoError(t, err)
@@ -109,6 +110,7 @@ func TestQueryPendingCommands(t *testing.T) {
 func TestQueryDepositState(t *testing.T) {
 	var (
 		baseKeeper      *mock.BaseKeeperMock
+		signer          *mock.SignerMock
 		multisig        *mock.MultisigKeeperMock
 		ctx             sdk.Context
 		evmChain        nexus.ChainName
@@ -154,7 +156,7 @@ func TestQueryDepositState(t *testing.T) {
 			},
 		}
 
-		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, multisig)
+		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, signer, multisig)
 		grpcQuerier = &q
 	}
 	repeatCount := 20
@@ -253,6 +255,7 @@ func TestQueryDepositState(t *testing.T) {
 func TestChains(t *testing.T) {
 	var (
 		baseKeeper  *mock.BaseKeeperMock
+		signer      *mock.SignerMock
 		multisig    *mock.MultisigKeeperMock
 		nexusKeeper *mock.NexusMock
 		ctx         sdk.Context
@@ -290,7 +293,7 @@ func TestChains(t *testing.T) {
 			},
 		}
 
-		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, multisig)
+		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, signer, multisig)
 		grpcQuerier = &q
 		res, err := grpcQuerier.Chains(sdk.WrapSDKContext(ctx), &types.ChainsRequest{})
 
@@ -315,7 +318,7 @@ func TestChains(t *testing.T) {
 			},
 		}
 
-		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, multisig)
+		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, signer, multisig)
 		grpcQuerier = &q
 		res, err := grpcQuerier.Chains(sdk.WrapSDKContext(ctx), &types.ChainsRequest{})
 
@@ -329,6 +332,7 @@ func TestChains(t *testing.T) {
 func TestGateway(t *testing.T) {
 	var (
 		baseKeeper    *mock.BaseKeeperMock
+		signer        *mock.SignerMock
 		multisig      *mock.MultisigKeeperMock
 		nexusKeeper   *mock.NexusMock
 		chainKeeper   *mock.ChainKeeperMock
@@ -359,7 +363,7 @@ func TestGateway(t *testing.T) {
 			},
 		}
 
-		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, multisig)
+		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, signer, multisig)
 		grpcQuerier = &q
 	}
 
@@ -414,6 +418,7 @@ func TestGateway(t *testing.T) {
 func TestBytecode(t *testing.T) {
 	var (
 		baseKeeper     *mock.BaseKeeperMock
+		signer         *mock.SignerMock
 		multisig       *mock.MultisigKeeperMock
 		nexusKeeper    *mock.NexusMock
 		chainKeeper    *mock.ChainKeeperMock
@@ -466,7 +471,7 @@ func TestBytecode(t *testing.T) {
 			},
 		}
 
-		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, multisig)
+		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, signer, multisig)
 		grpcQuerier = &q
 	}
 
@@ -498,6 +503,7 @@ func TestBytecode(t *testing.T) {
 func TestEvent(t *testing.T) {
 	var (
 		baseKeeper         *mock.BaseKeeperMock
+		signer             *mock.SignerMock
 		multisig           *mock.MultisigKeeperMock
 		chainKeeper        *mock.ChainKeeperMock
 		nexusKeeper        *mock.NexusMock
@@ -545,7 +551,7 @@ func TestEvent(t *testing.T) {
 			},
 		}
 
-		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, multisig)
+		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, signer, multisig)
 		grpcQuerier = &q
 	}
 
@@ -648,7 +654,7 @@ func TestERC20Tokens(t *testing.T) {
 			},
 		}
 
-		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, nil)
+		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, nil, nil)
 		grpcQuerier = &q
 	}
 
@@ -719,6 +725,7 @@ func TestERC20Tokens(t *testing.T) {
 func TestTokenInfo(t *testing.T) {
 	var (
 		baseKeeper    *mock.BaseKeeperMock
+		signer        *mock.SignerMock
 		multisig      *mock.MultisigKeeperMock
 		nexusKeeper   *mock.NexusMock
 		chainKeeper   *mock.ChainKeeperMock
@@ -780,7 +787,7 @@ func TestTokenInfo(t *testing.T) {
 			},
 		}
 
-		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, multisig)
+		q := evmKeeper.NewGRPCQuerier(baseKeeper, nexusKeeper, signer, multisig)
 		grpcQuerier = &q
 	}
 

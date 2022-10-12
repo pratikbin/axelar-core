@@ -9,9 +9,7 @@ import (
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
-	"github.com/cosmos/cosmos-sdk/types/query"
 
-	"github.com/axelarnetwork/axelar-core/utils/events"
 	"github.com/axelarnetwork/axelar-core/x/evm/types"
 	multisig "github.com/axelarnetwork/axelar-core/x/multisig/exported"
 	nexus "github.com/axelarnetwork/axelar-core/x/nexus/exported"
@@ -108,13 +106,13 @@ func (s msgServer) ConfirmGatewayTx(c context.Context, req *types.ConfirmGateway
 		return nil, fmt.Errorf("required confirmation height not found")
 	}
 
-	events.Emit(ctx, &types.ConfirmGatewayTxStarted{
+	funcs.MustNoErr(ctx.EventManager().EmitTypedEvent(&types.ConfirmGatewayTxStarted{
 		TxID:               req.TxID,
 		Chain:              chain.Name,
 		GatewayAddress:     gatewayAddress,
 		ConfirmationHeight: height,
 		PollParticipants:   pollParticipants,
-	})
+	}))
 
 	return &types.ConfirmGatewayTxResponse{}, nil
 }
@@ -263,7 +261,7 @@ func (s msgServer) ConfirmToken(c context.Context, req *types.ConfirmTokenReques
 		return nil, err
 	}
 
-	events.Emit(ctx, &types.ConfirmTokenStarted{
+	funcs.MustNoErr(ctx.EventManager().EmitTypedEvent(&types.ConfirmTokenStarted{
 		TxID:               req.TxID,
 		Chain:              chain.Name,
 		GatewayAddress:     funcs.MustOk(keeper.GetGatewayAddress(ctx)),
@@ -271,7 +269,7 @@ func (s msgServer) ConfirmToken(c context.Context, req *types.ConfirmTokenReques
 		TokenDetails:       token.GetDetails(),
 		ConfirmationHeight: funcs.MustOk(keeper.GetRequiredConfirmationHeight(ctx)),
 		PollParticipants:   pollParticipants,
-	})
+	}))
 
 	return &types.ConfirmTokenResponse{}, nil
 }
@@ -310,7 +308,7 @@ func (s msgServer) ConfirmDeposit(c context.Context, req *types.ConfirmDepositRe
 	}
 
 	if burnerAddress != req.BurnerAddress {
-		return nil, fmt.Errorf("provided burner address %s doesn't match expected address %s", req.BurnerAddress.Hex(), burnerAddress.Hex())
+		return nil, fmt.Errorf("provided burner address %s doesn't match expected address %s", req.BurnerAddress, burnerAddress)
 	}
 
 	pollParticipants, err := s.initializePoll(ctx, chain, req.TxID)
@@ -319,15 +317,14 @@ func (s msgServer) ConfirmDeposit(c context.Context, req *types.ConfirmDepositRe
 	}
 
 	height, _ := keeper.GetRequiredConfirmationHeight(ctx)
-	events.Emit(ctx, &types.ConfirmDepositStarted{
+	funcs.MustNoErr(ctx.EventManager().EmitTypedEvent(&types.ConfirmDepositStarted{
 		TxID:               req.TxID,
 		Chain:              chain.Name,
 		DepositAddress:     req.BurnerAddress,
 		TokenAddress:       burnerInfo.TokenAddress,
 		ConfirmationHeight: height,
 		PollParticipants:   pollParticipants,
-		Asset:              burnerInfo.Asset,
-	})
+	}))
 
 	return &types.ConfirmDepositResponse{}, nil
 }
@@ -361,7 +358,7 @@ func (s msgServer) ConfirmTransferKey(c context.Context, req *types.ConfirmTrans
 	}
 
 	params := keeper.GetParams(ctx)
-	events.Emit(ctx, types.NewConfirmKeyTransferStarted(chain.Name, req.TxID, gatewayAddr, params.ConfirmationHeight, pollParticipants))
+	funcs.MustNoErr(ctx.EventManager().EmitTypedEvent(types.NewConfirmKeyTransferStarted(chain.Name, req.TxID, gatewayAddr, params.ConfirmationHeight, pollParticipants)))
 
 	return &types.ConfirmTransferKeyResponse{}, nil
 }
@@ -447,18 +444,8 @@ func (s msgServer) CreateBurnTokens(c context.Context, req *types.CreateBurnToke
 	}
 
 	keeper := s.ForChain(chain.Name)
-	transferLimit := keeper.GetParams(ctx).TransferLimit
-	pageRequest := &query.PageRequest{
-		Key:        nil,
-		Offset:     0,
-		Limit:      transferLimit,
-		CountTotal: false,
-		Reverse:    false,
-	}
-	deposits, _, err := keeper.GetConfirmedDepositsPaginated(ctx, pageRequest)
-	if err != nil {
-		return nil, err
-	}
+
+	deposits := keeper.GetConfirmedDeposits(ctx)
 	if len(deposits) == 0 {
 		return &types.CreateBurnTokensResponse{}, nil
 	}
@@ -494,7 +481,7 @@ func (s msgServer) CreateBurnTokens(c context.Context, req *types.CreateBurnToke
 			return nil, fmt.Errorf("token %s is not confirmed on %s", token.GetAsset(), chain.Name)
 		}
 
-		cmd := types.NewBurnTokenCommand(chainID, multisig.KeyID(keyID), ctx.BlockHeight(), *burnerInfo, token.IsExternal())
+		cmd, err := types.CreateBurnTokenCommand(chainID, multisig.KeyID(keyID), ctx.BlockHeight(), *burnerInfo, token.IsExternal())
 		if err != nil {
 			return nil, sdkerrors.Wrapf(err, "failed to create burn-token command to burn token at address %s for chain %s", burnerAddressHex, chain.Name)
 		}
@@ -502,14 +489,6 @@ func (s msgServer) CreateBurnTokens(c context.Context, req *types.CreateBurnToke
 		if err := keeper.EnqueueCommand(ctx, cmd); err != nil {
 			return nil, err
 		}
-
-		events.Emit(ctx, &types.BurnCommand{
-			Chain:            chain.Name,
-			CommandID:        cmd.ID,
-			DestinationChain: deposit.DestinationChain,
-			DepositAddress:   deposit.BurnerAddress.Hex(),
-			Asset:            token.GetAsset(),
-		})
 
 		seen[burnerAddressHex] = true
 	}
@@ -530,19 +509,8 @@ func (s msgServer) CreatePendingTransfers(c context.Context, req *types.CreatePe
 	}
 
 	keeper := s.ForChain(chain.Name)
-	transferLimit := keeper.GetParams(ctx).TransferLimit
-	pageRequest := &query.PageRequest{
-		Key:        nil,
-		Offset:     0,
-		Limit:      transferLimit,
-		CountTotal: false,
-		Reverse:    false,
-	}
-	pendingTransfers, _, err := s.nexus.GetTransfersForChainPaginated(ctx, chain, nexus.Pending, pageRequest)
-	if err != nil {
-		return nil, err
-	}
 
+	pendingTransfers := s.nexus.GetTransfersForChain(ctx, chain, nexus.Pending)
 	if len(pendingTransfers) == 0 {
 		s.Logger(ctx).Debug("no pending transfers found")
 		return &types.CreatePendingTransfersResponse{}, nil
@@ -577,15 +545,6 @@ func (s msgServer) CreatePendingTransfers(c context.Context, req *types.CreatePe
 		if err := keeper.EnqueueCommand(ctx, cmd); err != nil {
 			return nil, err
 		}
-
-		events.Emit(ctx, &types.MintCommand{
-			Chain:              chain.Name,
-			TransferID:         transfer.ID,
-			CommandID:          cmd.ID,
-			DestinationChain:   transfer.Recipient.Chain.Name,
-			DestinationAddress: transfer.Recipient.Address,
-			Asset:              transfer.Asset,
-		})
 
 		s.nexus.ArchivePendingTransfer(ctx, transfer)
 	}
@@ -646,7 +605,7 @@ func (s msgServer) createTransferKeyCommand(ctx sdk.Context, keeper types.ChainK
 		return types.Command{}, fmt.Errorf("could not find threshold key '%s'", nextKeyID)
 	}
 
-	return types.NewMultisigTransferCommand(chainID, keyID, nextKey), nil
+	return types.CreateMultisigTransferCommand(chainID, keyID, nextKey), nil
 }
 
 func getCommandBatchToSign(ctx sdk.Context, keeper types.ChainKeeper) (types.CommandBatch, error) {
@@ -743,7 +702,7 @@ func (s msgServer) AddChain(c context.Context, req *types.AddChainRequest) (*typ
 	s.nexus.SetChain(ctx, chain)
 	s.ForChain(chain.Name).SetParams(ctx, req.Params)
 
-	events.Emit(ctx, &types.ChainAdded{Chain: req.Name})
+	funcs.MustNoErr(ctx.EventManager().EmitTypedEvent(&types.ChainAdded{Chain: req.Name}))
 
 	return &types.AddChainResponse{}, nil
 }
@@ -777,14 +736,8 @@ func (s msgServer) RetryFailedEvent(c context.Context, req *types.RetryFailedEve
 	s.Logger(ctx).Info(
 		"re-queued failed event",
 		types.AttributeKeyChain, chain.Name,
-		"eventID", event.GetID(),
+		"eventID", req.EventID,
 	)
-
-	events.Emit(ctx, &types.EVMEventRetryFailed{
-		Chain:   event.Chain,
-		EventID: event.GetID(),
-		Type:    event.GetEventType(),
-	})
 
 	return &types.RetryFailedEventResponse{}, nil
 }
